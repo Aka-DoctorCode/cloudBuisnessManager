@@ -1,5 +1,5 @@
 import { initializeApp, getApps, deleteApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, signInAnonymously, onAuthStateChanged, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { getFirestore, collection, addDoc, deleteDoc, doc, query, orderBy, onSnapshot } from 'firebase/firestore';
 
 class FirebaseManager {
@@ -47,6 +47,15 @@ class FirebaseManager {
             this.app = initializeApp(config);
             this.db = getFirestore(this.app);
             this.auth = getAuth(this.app);
+            
+            // Set persistence to local
+            await setPersistence(this.auth, browserLocalPersistence);
+            
+            console.log("Firebase initialized successfully with config:", { 
+                ...config, 
+                apiKey: config.apiKey ? '***' + config.apiKey.slice(-4) : 'MISSING' 
+            });
+            
             return true;
         } catch (error) {
             console.error("Firebase initialization failed:", error);
@@ -66,7 +75,8 @@ class FirebaseManager {
             projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
             storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
             messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-            appId: import.meta.env.VITE_FIREBASE_APP_ID
+            appId: import.meta.env.VITE_FIREBASE_APP_ID,
+            measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
         };
 
         if (this.isValidConfig(envConfig)) {
@@ -102,16 +112,15 @@ class FirebaseManager {
      */
     clearConfig() {
         localStorage.removeItem(this.configKey);
-        // Also try to delete the app if possible, though this method is sync
-        // We rely on reload to clear memory state usually
     }
 
     /**
      * Authenticates the user anonymously.
      * @param {Function} onUserChanged Callback for user state changes.
+     * @param {Function} onError Callback for authentication errors.
      * @returns {Function} Unsubscribe function.
      */
-    authenticate(onUserChanged) {
+    authenticate(onUserChanged, onError) {
         if (!this.auth) return () => {};
 
         const unsubscribe = onAuthStateChanged(this.auth, (user) => {
@@ -121,10 +130,8 @@ class FirebaseManager {
             } else {
                 signInAnonymously(this.auth).catch((error) => {
                     console.error("Anonymous auth failed:", error);
-                    if (error.code === 'auth/configuration-not-found' || error.code === 'auth/api-key-not-valid' || error.code === 'auth/internal-error') {
-                        this.clearConfig();
-                        alert("Error crítico de autenticación: " + error.message + "\n\nLa configuración guardada parece inválida y ha sido eliminada. Por favor, recarga la página e ingresa la configuración nuevamente.");
-                        window.location.reload(); // Force reload to clear any bad state
+                    if (onError) {
+                        onError(error);
                     }
                     onUserChanged(null);
                 });
@@ -132,6 +139,34 @@ class FirebaseManager {
         });
 
         return unsubscribe;
+    }
+
+    /**
+     * Tests a configuration by attempting to initialize and sign in anonymously.
+     * @param {Object} config 
+     * @returns {Promise<{success: boolean, error: Error|null}>}
+     */
+    async testConfig(config) {
+        let testApp = null;
+        try {
+            // Use a unique name to avoid conflicts with the main app
+            const appName = `test-app-${Date.now()}`;
+            testApp = initializeApp(config, appName);
+            const testAuth = getAuth(testApp);
+            await signInAnonymously(testAuth);
+            return { success: true, error: null };
+        } catch (error) {
+            console.error("Test config failed:", error);
+            return { success: false, error };
+        } finally {
+            if (testApp) {
+                try {
+                    await deleteApp(testApp);
+                } catch (e) {
+                    console.warn("Failed to delete test app:", e);
+                }
+            }
+        }
     }
 }
 

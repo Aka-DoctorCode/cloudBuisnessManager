@@ -1,0 +1,5 @@
+{
+  "name": "Business Control App",
+  "description": "A business control application for tracking income, expenses, and receivables with Firebase integration.",
+  "requestFramePermissions": []
+}
